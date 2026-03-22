@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Orbital Insight — ACM Dashboard</title>
+<style>
+/* ── Reset ── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #080c18;
+  color: #c0d0e8;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ── Top bar ── */
+#top-bar {
+  position: fixed; top: 0; left: 0; right: 0; height: 42px;
+  background: #0b1228;
+  border-bottom: 1px solid #1c2e58;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px;
+  z-index: 100;
+}
+.logo { color: #4af; font-size: 14px; font-weight: bold; letter-spacing: 2px; white-space: nowrap; }
+.simtime { color: #688; font-size: 11px; flex: 1; padding-left: 10px; }
+.chip {
+  background: #0e1a34; border: 1px solid #1c2e58; border-radius: 4px;
+  padding: 2px 10px; font-size: 11px; white-space: nowrap;
+  display: flex; gap: 5px; align-items: center;
+}
+.chip b { font-weight: bold; }
+.green b { color: #3d8; }
+.yellow b { color: #fb3; }
+.red b { color: #f44; }
+.cyan b { color: #4af; }
+#cs {
+  font-size: 10px; padding: 2px 10px; border-radius: 3px;
+  border: 1px solid #1c2e58; background: #0e1a34; color: #fb3;
+}
+#cs.live { background: #091e10; color: #3d8; border-color: #1a4a28; }
+#cs.err  { background: #1e0909; color: #f44; border-color: #4a1818; }
+
+/* ── Main grid ──
+   Left column: big map (top) + CDM list (bottom)
+   Right column: bullseye + fuel bars + gantt (full height)
+── */
+#grid {
+  position: fixed; top: 42px; left: 0; right: 0; bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  grid-template-rows: 1fr 190px;
+  gap: 3px; padding: 3px;
+  background: #050810;
+}
+#p-map  { grid-column: 1; grid-row: 1; }
+#p-cdm  { grid-column: 1; grid-row: 2; }
+#p-side { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 3px; }
+#p-side > .panel { flex: 1; min-height: 0; }
+
+/* ── Panel base ── */
+.panel {
+  background: #0b1228;
+  border: 1px solid #1c2e58;
+  border-radius: 4px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  min-width: 0; min-height: 0;
+}
+.ph {
+  background: #0d1830;
+  border-bottom: 1px solid #1c2e58;
+  padding: 5px 10px; flex-shrink: 0;
+  font-size: 10px; letter-spacing: 1px; color: #4af;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.ph span.sub { color: #557; font-size: 10px; letter-spacing: 0; }
+
+/* Canvas container — canvas fills it via absolute positioning */
+.cvbox { flex: 1; position: relative; overflow: hidden; }
+canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
+
+/* Scrollable body */
+.scroll { flex: 1; overflow-y: auto; padding: 5px; }
+
+/* ── CDM rows ── */
+.cdm-row {
+  display: flex; gap: 6px; align-items: center;
+  padding: 3px 6px; margin-bottom: 2px; border-radius: 3px;
+  font-size: 10px; border-left: 3px solid #333;
+}
+.cdm-row.CRITICAL { border-color: #f44; background: rgba(255,50,50,.08); }
+.cdm-row.WARNING  { border-color: #fb3; background: rgba(255,180,30,.07); }
+.cdm-empty { color: #1a4a2a; padding: 14px; text-align: center; font-size: 11px; }
+
+/* ── Fuel bars ── */
+.fr { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
+.fr-name  { width: 36px; font-size: 10px; color: #6af; flex-shrink: 0; }
+.fr-track { flex: 1; height: 8px; background: #0d1830; border-radius: 3px; overflow: hidden; }
+.fr-fill  { height: 100%; border-radius: 3px; transition: width 0.5s; }
+.fr-pct   { width: 34px; font-size: 10px; text-align: right; flex-shrink: 0; }
+
+/* ── Gantt ── */
+.gr { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; min-height: 18px; }
+.gr-lbl { width: 36px; font-size: 10px; color: #6af; flex-shrink: 0; }
+.gr-bar {
+  height: 13px; border-radius: 2px; font-size: 9px;
+  display: flex; align-items: center; padding: 0 5px;
+  white-space: nowrap; min-width: 60px;
+}
+.bar-nm { background: #091e09; color: #3a8; border: 1px solid #1a3a1a; }
+.bar-ev { background: #1e0909; color: #f88; border: 1px solid #4a1818; }
+.bar-rc { background: #091430; color: #88f; border: 1px solid #182860; }
+.bar-eo { background: #1e1200; color: #fb8; border: 1px solid #4a3000; }
+.badge {
+  font-size: 9px; padding: 0 4px; border-radius: 2px;
+  border: 1px solid; white-space: nowrap;
+}
+.badge-cdm { background: #2a1400; color: #fa6; border-color: #5a3000; }
+.badge-fuel { background: #1e0909; color: #f44; border-color: #4a1818; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ TOP BAR ═══════════════ -->
+<div id="top-bar">
+  <div class="logo">⬡ ORBITAL INSIGHT — ACM</div>
+  <div class="simtime" id="T0">SIM TIME: initializing...</div>
+  <div class="chip green"><span>SATS</span> <b id="T1">--</b></div>
+  <div class="chip yellow"><span>CDMs</span> <b id="T2">--</b></div>
+  <div class="chip red"><span>CRIT</span> <b id="T3">--</b></div>
+  <div class="chip cyan"><span>FUEL</span> <b id="T4">-- kg</b></div>
+  <div class="chip"><span>ΔV</span> <b id="T5" style="color:#adf">-- m/s</b></div>
+  <div id="cs">● CONNECTING</div>
+</div>
+
+<!-- ═══════════════ MAIN GRID ═══════════════ -->
+<div id="grid">
+
+  <!-- MAP — large top-left -->
+  <div class="panel" id="p-map">
+    <div class="ph">
+      <span>GROUND TRACK — MERCATOR</span>
+      <span class="sub" id="map-sub">waiting for data...</span>
+    </div>
+    <div class="cvbox">
+      <canvas id="map-c"></canvas>
+    </div>
+  </div>
+
+  <!-- CDM LIST — bottom-left -->
+  <div class="panel" id="p-cdm">
+    <div class="ph">
+      <span>CONJUNCTION DATA MESSAGES</span>
+      <span class="sub" id="cdm-count">0 active</span>
+    </div>
+    <div class="scroll" id="cdm-body"></div>
+  </div>
+
+  <!-- RIGHT SIDEBAR — full height -->
+  <div id="p-side">
+
+    <!-- Bullseye -->
+    <div class="panel">
+      <div class="ph">
+        <span>CONJUNCTION BULLSEYE</span>
+        <span class="sub" id="bul-lbl">click a satellite on map</span>
+      </div>
+      <div class="cvbox">
+        <canvas id="bul-c"></canvas>
+      </div>
+    </div>
+
+    <!-- Fuel bars -->
+    <div class="panel">
+      <div class="ph"><span>FUEL RESERVES</span></div>
+      <div class="scroll" id="fuel-body"></div>
+    </div>
+
+    <!-- Maneuver timeline -->
+    <div class="panel">
+      <div class="ph"><span>MANEUVER TIMELINE</span></div>
+      <div class="scroll" id="gantt-body"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════ JAVASCRIPT ═══════════════ -->
+<script>
+'use strict';
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const POLL_MS   = 2000;   // how often to refresh from backend
+const TRAIL_MAX = 45;     // orbit trail length (number of past positions)
+const INITIAL_FUEL_KG = 50.0; // used for fuel% fallback calc
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let snap    = null;   // latest snapshot from /api/visualization/snapshot
+let selId   = null;   // currently selected satellite ID
+let trails  = {};     // { satId: [ {lat,lon}, ... ] }
+
+// ── Ground stations (from problem spec) ──────────────────────────────────────
+const GS = [
+  { lat: 13.03,  lon:  77.52,  name: 'BLR' },
+  { lat: 78.23,  lon:  15.41,  name: 'SVL' },
+  { lat: 35.43,  lon: -116.89, name: 'GLD' },
+  { lat:-53.15,  lon:  -70.92, name: 'PNT' },
+  { lat: 28.55,  lon:  77.19,  name: 'DEL' },
+  { lat:-77.85,  lon: 166.67,  name: 'MCM' },
+];
+
+// ── Coordinate helpers ────────────────────────────────────────────────────────
+const lonToX = (lon, W) => (lon + 180) / 360 * W;
+const latToY = (lat, H) => (90  - lat) / 180 * H;
+
+// ── Fuel % helper — handles all possible field combinations ──────────────────
+function fuelPct(sat) {
+  if (sat.fuel_pct  != null && !isNaN(sat.fuel_pct))  return +sat.fuel_pct;
+  if (sat.fuel_kg   != null && !isNaN(sat.fuel_kg))   return (sat.fuel_kg / INITIAL_FUEL_KG) * 100;
+  return 100; // default full if unknown
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FETCH
+// ═════════════════════════════════════════════════════════════════════════════
+async function fetchSnap() {
+  try {
+    const res = await fetch('/api/visualization/snapshot');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    snap = await res.json();
+    setStatus('live', '● LIVE');
+    render();
+  } catch (e) {
+    setStatus('err', '✕ ' + e.message);
+  }
+}
+
+function setStatus(cls, txt) {
+  const el = document.getElementById('cs');
+  el.className = cls;
+  el.textContent = txt;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MAIN RENDER — calls all sub-renderers
+// ═════════════════════════════════════════════════════════════════════════════
+function render() {
+  if (!snap) return;
+  renderTopBar();
+  renderMap();
+  renderCDM();
+  renderFuel();
+  renderGantt();
+  if (selId) renderBullseye();
+}
+
+// ── Top bar stats ─────────────────────────────────────────────────────────────
+function renderTopBar() {
+  const s = snap.fleet_stats || {};
+  const t = (snap.timestamp || '')
+    .replace('T', ' ')
+    .replace('+00:00', '')
+    .replace('Z', '')
+    .substring(0, 19);
+
+  document.getElementById('T0').textContent = 'SIM: ' + (t || '--') + ' UTC';
+  document.getElementById('T1').textContent = s.total_satellites   ?? '--';
+  document.getElementById('T2').textContent = s.active_cdm_warnings ?? 0;
+  document.getElementById('T4').textContent = ((s.fleet_fuel_remaining_kg || 0).toFixed(0)) + ' kg';
+  document.getElementById('T5').textContent = ((s.fleet_dv_used_ms || 0).toFixed(1)) + ' m/s';
+
+  const critCount = (snap.cdm_warnings || []).filter(w => w.severity === 'CRITICAL').length;
+  document.getElementById('T3').textContent = critCount;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MAP
+// ═════════════════════════════════════════════════════════════════════════════
+function renderMap() {
+  const cv  = document.getElementById('map-c');
+  const W   = cv.offsetWidth;
+  const H   = cv.offsetHeight;
+  if (!W || !H) return;                         // panel not rendered yet
+  if (cv.width !== W || cv.height !== H) {      // resize backing store only when needed
+    cv.width  = W;
+    cv.height = H;
+  }
+
+  const ctx = cv.getContext('2d');
+
+  // ── Background ──
+  ctx.fillStyle = '#04070e';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Lat/lon grid ──
+  ctx.strokeStyle = '#0d1c36';
+  ctx.lineWidth = 0.5;
+  for (let lon = -180; lon <= 180; lon += 30) {
+    const x = lonToX(lon, W);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let lat = -90; lat <= 90; lat += 30) {
+    const y = latToY(lat, H);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // ── Equator + prime meridian (brighter) ──
+  ctx.strokeStyle = '#162440';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, latToY(0, H)); ctx.lineTo(W, latToY(0, H)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(lonToX(0, W), 0); ctx.lineTo(lonToX(0, W), H); ctx.stroke();
+
+  // ── Ground stations ──
+  GS.forEach(g => {
+    const gx = lonToX(g.lon, W);
+    const gy = latToY(g.lat, H);
+    // Filled circle
+    ctx.fillStyle = '#163060';
+    ctx.beginPath(); ctx.arc(gx, gy, 5, 0, Math.PI * 2); ctx.fill();
+    // Outline
+    ctx.strokeStyle = '#4af';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(gx, gy, 5, 0, Math.PI * 2); ctx.stroke();
+    // Label
+    ctx.fillStyle = '#5bf';
+    ctx.font = '9px monospace';
+    ctx.fillText(g.name, gx + 8, gy + 3);
+  });
+
+  const sats = snap.satellites || [];
+
+  // ── Orbit trails ──
+  sats.forEach(sat => {
+    if (!trails[sat.id]) trails[sat.id] = [];
+    trails[sat.id].push({ lat: sat.lat, lon: sat.lon });
+    if (trails[sat.id].length > TRAIL_MAX) trails[sat.id].shift();
+
+    const tr = trails[sat.id];
+    if (tr.length < 2) return;
+
+    ctx.beginPath();
+    tr.forEach((pt, i) => {
+      const tx = lonToX(pt.lon, W);
+      const ty = latToY(pt.lat, H);
+      // Break line at antimeridian jump (>90° lon gap)
+      const prev = tr[i - 1];
+      if (i === 0 || (prev && Math.abs(pt.lon - prev.lon) > 90)) {
+        ctx.moveTo(tx, ty);
+      } else {
+        ctx.lineTo(tx, ty);
+      }
+    });
+    ctx.strokeStyle = 'rgba(30, 120, 220, 0.30)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // ── Debris cloud — pixel-plot for performance with 10k+ objects ──
+  const deb = snap.debris_cloud || [];
+  if (deb.length > 0) {
+    const img  = ctx.getImageData(0, 0, W, H);
+    const data = img.data;
+    deb.forEach(o => {
+      // o = [id, lat, lon, alt]
+      const px = Math.round(lonToX(o[2], W));
+      const py = Math.round(latToY(o[1], H));
+      if (px >= 0 && px < W && py >= 0 && py < H) {
+        const idx = (py * W + px) * 4;
+        data[idx]     = 210;  // R
+        data[idx + 1] = 90;   // G
+        data[idx + 2] = 30;   // B
+        data[idx + 3] = 200;  // A
+      }
+    });
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ── Satellite dots ──
+  sats.forEach(sat => {
+    const sx  = lonToX(sat.lon, W);
+    const sy  = latToY(sat.lat, H);
+    const sel = sat.id === selId;
+
+    // Color by priority: EOL > CDM warning > Evading > Recovering > Nominal
+    let col = '#4af';                              // nominal: blue
+    if (sat.status === 'RECOVERING') col = '#88f'; // recovering: purple-blue
+    if (sat.status === 'EVADING')    col = '#fb3'; // evading: orange
+    if (sat.cdm_count > 0)           col = '#f80'; // has active CDM: amber
+    if (sat.status === 'EOL')        col = '#f44'; // end-of-life: red
+
+    // Selection ring
+    if (sel) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(sx, sy, 10, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // Main dot (larger when selected)
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(sx, sy, sel ? 5 : 3.5, 0, Math.PI * 2); ctx.fill();
+
+    // Label for selected satellite
+    if (sel) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(sat.id.replace('SAT-Alpha-', '#'), sx + 13, sy + 4);
+    }
+  });
+
+  // ── Legend (bottom-left corner) ──
+  const legend = [
+    { c: '#4af', l: 'Nominal'    },
+    { c: '#fb3', l: 'Evading'    },
+    { c: '#f80', l: 'CDM Active' },
+    { c: '#f44', l: 'EOL'        },
+    { c: '#d5622a', l: 'Debris'  },
+  ];
+  ctx.font = '9px monospace';
+  legend.forEach((item, i) => {
+    const lx = 8;
+    const ly = H - 8 - i * 14;
+    ctx.fillStyle = item.c;
+    ctx.fillRect(lx, ly - 7, 9, 9);
+    ctx.fillStyle = '#7a9ab8';
+    ctx.fillText(item.l, lx + 13, ly);
+  });
+
+  // ── Sub-label ──
+  document.getElementById('map-sub').textContent =
+    sats.length + ' satellites · ' + deb.length + ' debris objects tracked';
+
+  // ── Click to select satellite ──
+  cv.onclick = e => {
+    const rect  = cv.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const my = (e.clientY - rect.top)  * scaleY;
+
+    let best = null, bestDist = 16; // 16px hit radius
+    sats.forEach(sat => {
+      const d = Math.hypot(mx - lonToX(sat.lon, W), my - latToY(sat.lat, H));
+      if (d < bestDist) { bestDist = d; best = sat.id; }
+    });
+
+    selId = best;
+    document.getElementById('bul-lbl').textContent = best || 'click a satellite on map';
+    render(); // re-render so selection ring appears immediately
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BULLSEYE (conjunction polar chart)
+// ═════════════════════════════════════════════════════════════════════════════
+function renderBullseye() {
+  const cv = document.getElementById('bul-c');
+  const W  = cv.offsetWidth;
+  const H  = cv.offsetHeight;
+  if (!W || !H) return;
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+
+  const ctx = cv.getContext('2d');
+  const cx  = W / 2;
+  const cy  = H / 2;
+  const maxR = Math.min(cx, cy) - 22;
+
+  // Background
+  ctx.fillStyle = '#04070e';
+  ctx.fillRect(0, 0, W, H);
+
+  // Concentric risk rings
+  const rings = [
+    { km: 0.1, label: '100m', color: '#f44' },
+    { km: 1.0, label: '1 km', color: '#fb3' },
+    { km: 5.0, label: '5 km', color: '#4af' },
+  ];
+  rings.forEach(ring => {
+    const pr = (ring.km / 5.0) * maxR;
+    ctx.strokeStyle = ring.color + '55';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.arc(cx, cy, pr, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = ring.color + '99';
+    ctx.font = '8px monospace';
+    ctx.fillText(ring.label, cx + pr + 3, cy - 3);
+  });
+
+  // Crosshair at center (the selected satellite)
+  ctx.strokeStyle = '#4af';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx - 12, cy); ctx.lineTo(cx + 12, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy + 12); ctx.stroke();
+
+  // Satellite label at center
+  if (selId) {
+    ctx.fillStyle = '#4af';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(selId.replace('SAT-Alpha-', '#'), cx, cy + 24);
+    ctx.textAlign = 'left';
+  }
+
+  // Plot debris warnings for the selected satellite
+  const warnings = (snap.cdm_warnings || []).filter(w => w.sat_id === selId);
+
+  if (warnings.length === 0) {
+    ctx.fillStyle = '#1a4a1a';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('NO ACTIVE CONJUNCTIONS', cx, cy + maxR + 16);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // Spread debris around the polar chart
+  warnings.forEach((w, i) => {
+    const dist  = Math.min(w.miss_km, 5.0);
+    const pr    = (dist / 5.0) * maxR;
+    const angle = (i / warnings.length) * Math.PI * 2 - Math.PI / 2;
+    const dx    = Math.cos(angle) * pr;
+    const dy    = Math.sin(angle) * pr;
+    const col   = w.severity === 'CRITICAL' ? '#f44' : '#fb3';
+
+    // Dot
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(cx + dx, cy + dy, 5, 0, Math.PI * 2); ctx.fill();
+
+    // Distance label
+    ctx.fillStyle = col + 'cc';
+    ctx.font = '8px monospace';
+    ctx.fillText((w.miss_km * 1000).toFixed(0) + 'm', cx + dx + 7, cy + dy + 3);
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CDM WARNING LIST
+// ═════════════════════════════════════════════════════════════════════════════
+function renderCDM() {
+  const warnings = snap.cdm_warnings || [];
+  document.getElementById('cdm-count').textContent = warnings.length + ' active';
+
+  const body = document.getElementById('cdm-body');
+
+  if (warnings.length === 0) {
+    body.innerHTML = '<div class="cdm-empty">✓ No active conjunction warnings</div>';
+    return;
+  }
+
+  body.innerHTML = warnings.slice(0, 50).map(w => {
+    const missM  = (w.miss_km * 1000).toFixed(0);
+    const tcaStr = (w.tca || '').replace('T', ' ').substring(0, 19);
+    const col    = w.severity === 'CRITICAL' ? '#f44' : '#fb3';
+    return `
+      <div class="cdm-row ${w.severity}">
+        <span style="color:#5af;min-width:90px">${w.sat_id}</span>
+        <span style="color:#445">↔</span>
+        <span style="color:#778;flex:1;font-size:10px">${w.deb_id}</span>
+        <span style="color:#ddd;min-width:50px">${missM} m</span>
+        <span style="color:#556;font-size:10px;min-width:130px">${tcaStr}</span>
+        <span style="color:${col};min-width:52px;text-align:right">${w.severity}</span>
+      </div>`;
+  }).join('');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FUEL BARS
+// ═════════════════════════════════════════════════════════════════════════════
+function renderFuel() {
+  const sats = snap.satellites || [];
+  const body = document.getElementById('fuel-body');
+
+  body.innerHTML = sats.map(sat => {
+    const pct = fuelPct(sat);
+    const pctClamped = Math.max(0, Math.min(100, pct));
+
+    // Color: green → yellow → red as fuel drops
+    let barCol  = '#1a6a2a';  // green (>40%)
+    let textCol = '#3d8';
+    if (pct < 40) { barCol = '#6a5a10'; textCol = '#cb3'; }
+    if (pct < 20) { barCol = '#6a1a1a'; textCol = '#f44'; }
+
+    const shortId = sat.id.replace('SAT-Alpha-', '#');
+    return `
+      <div class="fr">
+        <div class="fr-name" title="${sat.id}">${shortId}</div>
+        <div class="fr-track">
+          <div class="fr-fill" style="width:${pctClamped}%;background:${barCol}"></div>
+        </div>
+        <div class="fr-pct" style="color:${textCol}">${pct.toFixed(0)}%</div>
+      </div>`;
+  }).join('');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MANEUVER GANTT TIMELINE
+// ═════════════════════════════════════════════════════════════════════════════
+function renderGantt() {
+  const sats = snap.satellites || [];
+  const body = document.getElementById('gantt-body');
+
+  const statusMap = {
+    'NOMINAL':    { cls: 'bar-nm', txt: 'NOMINAL'     },
+    'EVADING':    { cls: 'bar-ev', txt: 'EVADING'     },
+    'RECOVERING': { cls: 'bar-rc', txt: 'RECOVERING'  },
+    'EOL':        { cls: 'bar-eo', txt: 'EOL/GRAVEYARD' },
+  };
+
+  body.innerHTML = sats.map(sat => {
+    const shortId = sat.id.replace('SAT-Alpha-', '#');
+    const st      = statusMap[sat.status] || statusMap['NOMINAL'];
+    const pct     = fuelPct(sat);
+
+    const cdmBadge  = sat.cdm_count > 0
+      ? `<span class="badge badge-cdm">⚠ ${sat.cdm_count} CDM</span>` : '';
+    const fuelBadge = pct < 20
+      ? `<span class="badge badge-fuel">LOW FUEL</span>` : '';
+
+    return `
+      <div class="gr">
+        <div class="gr-lbl" title="${sat.id}">${shortId}</div>
+        <div class="gr-bar ${st.cls}">${st.txt}</div>
+        ${cdmBadge}
+        ${fuelBadge}
+      </div>`;
+  }).join('');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BOOT
+// ═════════════════════════════════════════════════════════════════════════════
+fetchSnap();                                     // immediate first fetch
+setInterval(fetchSnap, POLL_MS);                 // then every 2 seconds
+window.addEventListener('resize', () => { if (snap) render(); });
+</script>
+</body>
+</html>
